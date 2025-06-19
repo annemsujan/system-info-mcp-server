@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "system-info": {
+      "command": "npx",
+      "args": ["@system-info/mcp-server@latest"]
+    }
+  }
+}

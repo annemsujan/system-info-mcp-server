@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "system-info": {
+      "command": "pipx",
+      "args": ["run", "system-info-mcp-server"]
+    }
+  }
+}

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "system-info-mcp-server"
+version = "1.0.0"
+description = "System Information MCP Server for Claude Desktop - Get real-time system information"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = ["mcp", "model-context-protocol", "system-info", "claude", "desktop"]
+authors = [
+  {name = "Your Name", email = "your.email@example.com"},
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "psutil>=5.9.0",
+  "mcp>=1.0.0",
+]
+
+[project.urls]
+Documentation = "https://github.com/username/system-info-mcp-server#readme"
+Issues = "https://github.com/username/system-info-mcp-server/issues"
+Source = "https://github.com/username/system-info-mcp-server"
+
+[project.scripts]
+system-info-mcp-server = "system_info_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["system_info_mcp"]
