@@ -11,7 +11,7 @@ requires-python = ">=3.8"
 license = "MIT"
 keywords = ["mcp", "model-context-protocol", "system-info", "claude", "desktop"]
 authors = [
-  {name = "Your Name", email = "your.email@example.com"},
+  {name = "Sujan Annem"},
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
