@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "system-info-mcp-server"
-version = "1.0.0"
+version = "1.0.1"
 description = "System Information MCP Server for Claude Desktop - Get real-time system information"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -30,6 +30,7 @@ classifiers = [
 dependencies = [
   "psutil>=5.9.0",
   "mcp>=1.0.0",
+  "screeninfo>=0.8.1",
 ]
 
 [project.urls]

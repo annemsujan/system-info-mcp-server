@@ -4,6 +4,8 @@ import asyncio
 import json
 import sys
 import argparse
+import subprocess
+import re
 from typing import Any, Dict, List, Optional
 import psutil
 import platform
@@ -14,6 +16,12 @@ try:
 except ImportError:
     print("Error: MCP package not found. Install with: pip install mcp")
     sys.exit(1)
+
+# Optional screeninfo import for cross-platform monitor detection
+try:
+    from screeninfo import get_monitors
+except ImportError:
+    get_monitors = None
 
 class SystemInfoServer:
     """System Information MCP Server for Python"""
@@ -314,6 +322,70 @@ class SystemInfoServer:
                 }
             except Exception as e:
                 return {"error": f"Failed to get quick stats: {str(e)}"}
+        
+        @self.mcp.tool()
+        def get_monitor_info() -> Dict[str, Any]:
+            """Get information about connected monitors/displays across Windows, macOS, and Linux"""
+            try:
+                monitors = []
+                system_name = platform.system().lower()
+                
+                # Try screeninfo first (cross-platform)
+                if get_monitors:
+                    try:
+                        screen_monitors = get_monitors()
+                        for i, monitor in enumerate(screen_monitors):
+                            monitor_info = {
+                                "id": i + 1,
+                                "name": getattr(monitor, 'name', f"Monitor {i + 1}"),
+                                "width": monitor.width,
+                                "height": monitor.height,
+                                "x": monitor.x,
+                                "y": monitor.y,
+                                "is_primary": getattr(monitor, 'is_primary', i == 0),
+                                "detection_method": "screeninfo"
+                            }
+                            
+                            # Add DPI if available
+                            if hasattr(monitor, 'width_mm') and hasattr(monitor, 'height_mm'):
+                                if monitor.width_mm and monitor.height_mm:
+                                    dpi_x = (monitor.width * 25.4) / monitor.width_mm
+                                    dpi_y = (monitor.height * 25.4) / monitor.height_mm
+                                    monitor_info["dpi"] = {"x": round(dpi_x, 1), "y": round(dpi_y, 1)}
+                            
+                            monitors.append(monitor_info)
+                    except Exception:
+                        # Fall back to platform-specific methods
+                        pass
+                
+                # Platform-specific detection if screeninfo failed or unavailable
+                if not monitors:
+                    if system_name == "windows":
+                        monitors = self._get_windows_monitors()
+                    elif system_name == "darwin":  # macOS
+                        monitors = self._get_macos_monitors()
+                    elif system_name == "linux":
+                        monitors = self._get_linux_monitors()
+                
+                # Final fallback
+                if not monitors:
+                    monitors = [{
+                        "id": 1,
+                        "name": "Unknown Monitor",
+                        "width": "Unknown",
+                        "height": "Unknown",
+                        "detection_method": "fallback",
+                        "note": "Unable to detect monitor details - install 'screeninfo' for better detection"
+                    }]
+                
+                return {
+                    "total_monitors": len(monitors),
+                    "monitors": monitors,
+                    "system": system_name
+                }
+                
+            except Exception as e:
+                return {"error": f"Failed to get monitor info: {str(e)}"}
 
     def get_quick_stats(self) -> Dict[str, Any]:
         """Get a quick overview of CPU, memory, and disk usage"""
@@ -598,6 +670,172 @@ class SystemInfoServer:
         except Exception as e:
             return {"error": f"Failed to get network info: {str(e)}"}
 
+    def _get_windows_monitors(self) -> List[Dict[str, Any]]:
+        """Get Windows monitor info using PowerShell"""
+        monitors = []
+        try:
+            cmd = [
+                "powershell", "-Command",
+                "Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBasicDisplayParams | ForEach-Object { $_ | Select-Object InstanceName, MaxHorizontalImageSize, MaxVerticalImageSize } | ConvertTo-Json"
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                if isinstance(data, dict):
+                    data = [data]
+                
+                for i, monitor in enumerate(data):
+                    monitors.append({
+                        "id": i + 1,
+                        "name": f"Monitor {i + 1}",
+                        "width": "Unknown",
+                        "height": "Unknown",
+                        "instance": monitor.get("InstanceName", "Unknown"),
+                        "physical_width_cm": monitor.get("MaxHorizontalImageSize"),
+                        "physical_height_cm": monitor.get("MaxVerticalImageSize"),
+                        "detection_method": "wmi"
+                    })
+        except Exception:
+            pass
+        return monitors
+
+    def _get_macos_monitors(self) -> List[Dict[str, Any]]:
+        """Get macOS monitor info using system_profiler"""
+        monitors = []
+        try:
+            result = subprocess.run([
+                "system_profiler", "SPDisplaysDataType", "-json"
+            ], capture_output=True, text=True, timeout=15)
+            
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                displays = data.get("SPDisplaysDataType", [])
+                
+                monitor_id = 1
+                for display in displays:
+                    display_info = display.get("spdisplays_ndrvs", [])
+                    for monitor in display_info:
+                        resolution = monitor.get("_spdisplays_resolution", "")
+                        width = height = "Unknown"
+                        
+                        if " x " in resolution:
+                            try:
+                                parts = resolution.split(" x ")
+                                width = parts[0].strip()
+                                height = parts[1].split(" ")[0]
+                            except:
+                                pass
+                        
+                        monitors.append({
+                            "id": monitor_id,
+                            "name": monitor.get("_name", f"Monitor {monitor_id}"),
+                            "width": width,
+                            "height": height,
+                            "retina": "Retina" in monitor.get("_name", ""),
+                            "detection_method": "system_profiler"
+                        })
+                        monitor_id += 1
+        except Exception:
+            pass
+        return monitors
+
+    def _get_linux_monitors(self) -> List[Dict[str, Any]]:
+        """Get Linux monitor info using xrandr"""
+        monitors = []
+        try:
+            result = subprocess.run(["xrandr", "--query"], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                monitor_id = 1
+                
+                for line in lines:
+                    if " connected" in line and "disconnected" not in line:
+                        parts = line.split()
+                        name = parts[0]
+                        
+                        # Extract resolution
+                        resolution_match = re.search(r'(\d+)x(\d+)', line)
+                        if resolution_match:
+                            width, height = resolution_match.groups()
+                            
+                            monitors.append({
+                                "id": monitor_id,
+                                "name": name,
+                                "width": width,
+                                "height": height,
+                                "is_primary": "primary" in line,
+                                "detection_method": "xrandr"
+                            })
+                            monitor_id += 1
+        except Exception:
+            pass
+        return monitors
+
+    def get_monitor_info(self) -> Dict[str, Any]:
+        """Get information about connected monitors/displays across Windows, macOS, and Linux"""
+        try:
+            monitors = []
+            system_name = platform.system().lower()
+            
+            # Try screeninfo first (cross-platform)
+            if get_monitors:
+                try:
+                    screen_monitors = get_monitors()
+                    for i, monitor in enumerate(screen_monitors):
+                        monitor_info = {
+                            "id": i + 1,
+                            "name": getattr(monitor, 'name', f"Monitor {i + 1}"),
+                            "width": monitor.width,
+                            "height": monitor.height,
+                            "x": monitor.x,
+                            "y": monitor.y,
+                            "is_primary": getattr(monitor, 'is_primary', i == 0),
+                            "detection_method": "screeninfo"
+                        }
+                        
+                        # Add DPI if available
+                        if hasattr(monitor, 'width_mm') and hasattr(monitor, 'height_mm'):
+                            if monitor.width_mm and monitor.height_mm:
+                                dpi_x = (monitor.width * 25.4) / monitor.width_mm
+                                dpi_y = (monitor.height * 25.4) / monitor.height_mm
+                                monitor_info["dpi"] = {"x": round(dpi_x, 1), "y": round(dpi_y, 1)}
+                        
+                        monitors.append(monitor_info)
+                except Exception:
+                    # Fall back to platform-specific methods
+                    pass
+            
+            # Platform-specific detection if screeninfo failed or unavailable
+            if not monitors:
+                if system_name == "windows":
+                    monitors = self._get_windows_monitors()
+                elif system_name == "darwin":  # macOS
+                    monitors = self._get_macos_monitors()
+                elif system_name == "linux":
+                    monitors = self._get_linux_monitors()
+            
+            # Final fallback
+            if not monitors:
+                monitors = [{
+                    "id": 1,
+                    "name": "Unknown Monitor",
+                    "width": "Unknown",
+                    "height": "Unknown",
+                    "detection_method": "fallback",
+                    "note": "Unable to detect monitor details - install 'screeninfo' for better detection"
+                }]
+            
+            return {
+                "total_monitors": len(monitors),
+                "monitors": monitors,
+                "system": system_name
+            }
+            
+        except Exception as e:
+            return {"error": f"Failed to get monitor info: {str(e)}"}
+
     def run(self):
         """Run the MCP server"""
         self.mcp.run()
@@ -617,6 +855,7 @@ def test_server():
         ("🔄 Running Processes (top 5)", lambda: server.get_running_processes(limit=5)),
         ("🖥️  System Information", server.get_system_info),
         ("🌐 Network Information", server.get_network_info),
+        ("🖥️  Monitor Information", server.get_monitor_info),
     ]
     
     for name, func in tools:
