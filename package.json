@@ -1,6 +1,6 @@
 {
   "name": "@system-info/mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "System Information MCP Server for Claude Desktop - Get real-time system information",
   "main": "dist/index.js",
   "bin": {

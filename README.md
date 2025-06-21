@@ -65,6 +65,7 @@ Both work identically! Choose based on your preference.
 - **🔄 Process Management**: Running processes with sorting
 - **🖥️ System Overview**: OS details, uptime, hardware
 - **🌐 Network Information**: Interfaces, connections
+- **🖥️ Monitor Detection**: Connected displays with resolution, refresh rate, and DPI
 - **⚡ Quick Stats**: Instant system health overview
 
 ## 🎯 Which Should You Choose?
@@ -94,7 +95,34 @@ Ask Claude any of these questions:
 "How much disk space is available?"
 "What are my computer's specs?"
 "List all network interfaces"
+"What monitors are connected to my computer?"
+"Show me my display setup and resolution"
+"What's my monitor refresh rate?"
 ```
+
+## 🖥️ Monitor Detection Features
+
+The enhanced Python version now includes comprehensive monitor detection:
+
+### Cross-Platform Support
+- **Windows**: Uses WMI and PowerShell for detailed monitor information
+- **macOS**: Uses system_profiler for display detection with Retina support
+- **Linux**: Uses xrandr (X11) and sway (Wayland) for comprehensive coverage
+
+### Detection Methods
+- **Primary**: screeninfo library for cross-platform compatibility
+- **Fallback**: Platform-specific commands for additional details
+- **Hybrid**: Combines multiple sources for complete information
+
+### Information Provided
+- **Resolution**: Width and height in pixels
+- **Position**: X, Y coordinates for multi-monitor setups
+- **Refresh Rate**: Display refresh rate when available
+- **DPI**: Calculated dots per inch (when physical dimensions available)
+- **Manufacturer**: Monitor brand and model information
+- **Connection Type**: HDMI, DisplayPort, VGA, etc.
+- **Primary Display**: Identifies main monitor
+- **Retina Detection**: macOS Retina display identification
 
 ## 🔧 Requirements
 

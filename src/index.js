@@ -9,6 +9,10 @@ import {
 import si from 'systeminformation';
 import os from 'os';
 import process from 'process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 /**
  * System Information MCP Server
@@ -124,6 +128,15 @@ class SystemInfoServer {
               required: [],
             },
           },
+          {
+            name: 'get_monitor_info',
+            description: 'Get information about connected monitors/displays across Windows, macOS, and Linux',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              required: [],
+            },
+          },
         ],
       };
     });
@@ -155,6 +168,9 @@ class SystemInfoServer {
             break;
           case 'get_quick_stats':
             result = await this.getQuickStats();
+            break;
+          case 'get_monitor_info':
+            result = await this.getMonitorInfo();
             break;
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -379,6 +395,168 @@ class SystemInfoServer {
     };
   }
 
+  async getMonitorInfo() {
+    const systemName = os.platform();
+    let monitors = [];
+
+    try {
+      // Try systeminformation first
+      const displays = await si.graphics();
+      if (displays && displays.displays && displays.displays.length > 0) {
+        monitors = displays.displays.map((display, index) => ({
+          id: index + 1,
+          name: display.model || `Display ${index + 1}`,
+          vendor: display.vendor || 'Unknown',
+          width: display.resolutionX || 'Unknown',
+          height: display.resolutionY || 'Unknown',
+          main: display.main || false,
+          builtin: display.builtin || false,
+          detection_method: 'systeminformation'
+        }));
+      }
+
+      // Platform-specific fallbacks if systeminformation didn't work
+      if (monitors.length === 0) {
+        if (systemName === 'win32') {
+          monitors = await this._getWindowsMonitors();
+        } else if (systemName === 'darwin') {
+          monitors = await this._getMacOSMonitors();
+        } else if (systemName === 'linux') {
+          monitors = await this._getLinuxMonitors();
+        }
+      }
+
+      // Final fallback
+      if (monitors.length === 0) {
+        monitors = [{
+          id: 1,
+          name: 'Unknown Monitor',
+          width: 'Unknown',
+          height: 'Unknown',
+          detection_method: 'fallback',
+          note: 'Unable to detect monitor details'
+        }];
+      }
+
+      return {
+        total_monitors: monitors.length,
+        monitors: monitors,
+        system: systemName
+      };
+    } catch (error) {
+      return {
+        error: `Failed to get monitor info: ${error.message}`,
+        system: systemName
+      };
+    }
+  }
+
+  async _getWindowsMonitors() {
+    const monitors = [];
+    try {
+      const cmd = 'powershell "Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorBasicDisplayParams | ForEach-Object { $_ | Select-Object InstanceName, MaxHorizontalImageSize, MaxVerticalImageSize } | ConvertTo-Json"';
+      const { stdout } = await execAsync(cmd, { timeout: 10000 });
+      
+      if (stdout.trim()) {
+        let data = JSON.parse(stdout);
+        if (!Array.isArray(data)) {
+          data = [data];
+        }
+        
+        data.forEach((monitor, index) => {
+          monitors.push({
+            id: index + 1,
+            name: `Monitor ${index + 1}`,
+            width: 'Unknown',
+            height: 'Unknown',
+            instance: monitor.InstanceName || 'Unknown',
+            physical_width_cm: monitor.MaxHorizontalImageSize,
+            physical_height_cm: monitor.MaxVerticalImageSize,
+            detection_method: 'wmi'
+          });
+        });
+      }
+    } catch (error) {
+      // Ignore errors for fallback method
+    }
+    return monitors;
+  }
+
+  async _getMacOSMonitors() {
+    const monitors = [];
+    try {
+      const { stdout } = await execAsync('system_profiler SPDisplaysDataType -json', { timeout: 15000 });
+      const data = JSON.parse(stdout);
+      const displays = data.SPDisplaysDataType || [];
+      
+      let monitorId = 1;
+      for (const display of displays) {
+        const displayInfo = display.spdisplays_ndrvs || [];
+        for (const monitor of displayInfo) {
+          const resolution = monitor._spdisplays_resolution || '';
+          let width = 'Unknown';
+          let height = 'Unknown';
+          
+          if (resolution.includes(' x ')) {
+            try {
+              const parts = resolution.split(' x ');
+              width = parts[0].trim();
+              height = parts[1].split(' ')[0];
+            } catch (e) {
+              // Keep defaults
+            }
+          }
+          
+          monitors.push({
+            id: monitorId++,
+            name: monitor._name || `Monitor ${monitorId}`,
+            width: width,
+            height: height,
+            retina: (monitor._name || '').includes('Retina'),
+            detection_method: 'system_profiler'
+          });
+        }
+      }
+    } catch (error) {
+      // Ignore errors for fallback method
+    }
+    return monitors;
+  }
+
+  async _getLinuxMonitors() {
+    const monitors = [];
+    try {
+      const { stdout } = await execAsync('xrandr --query', { timeout: 10000 });
+      const lines = stdout.split('\n');
+      let monitorId = 1;
+      
+      for (const line of lines) {
+        if (line.includes(' connected') && !line.includes('disconnected')) {
+          const parts = line.split(/\s+/);
+          const name = parts[0];
+          
+          // Extract resolution
+          const resolutionMatch = line.match(/(\d+)x(\d+)/);
+          if (resolutionMatch) {
+            const [, width, height] = resolutionMatch;
+            
+            monitors.push({
+              id: monitorId++,
+              name: name,
+              width: width,
+              height: height,
+              is_primary: line.includes('primary'),
+              detection_method: 'xrandr'
+            });
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore errors for fallback method
+    }
+    return monitors;
+  }
+
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
@@ -413,6 +591,9 @@ async function runTest() {
     
     console.log('🌐 Network Information:');
     console.log(JSON.stringify(await server.getNetworkInfo(), null, 2));
+    
+    console.log('🖥️  Monitor Information:');
+    console.log(JSON.stringify(await server.getMonitorInfo(), null, 2));
     
     console.log('✅ All tests completed successfully!');
   } catch (error) {
